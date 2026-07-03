@@ -16,6 +16,8 @@ import {
   getShopPoolForRound,
   rollShopOffers,
 } from "../data/shop.js";
+import { rollItemOffers } from "../data/itemShop.js";
+import { applyItemToPet, getItemDefinition } from "../data/items.js";
 
 const RUN_STATE_KEY = "runState";
 const SHOP_PORTRAIT_SCALE = 0.72;
@@ -26,6 +28,8 @@ const CARD_HEIGHT = Math.ceil(SHOP_PORTRAIT_MAX_HEIGHT) + 46;
 const PORTRAIT_Y = -28;
 const PANEL_SPLIT_RATIO = 0.5;
 const SHOP_ROW_NUDGE_PX = 50;
+const ITEM_CARD_WIDTH = 86;
+const ITEM_CARD_HEIGHT = 108;
 
 export class ShopScene extends Phaser.Scene {
   constructor() {
@@ -50,8 +54,11 @@ export class ShopScene extends Phaser.Scene {
       this.shopOffers = rollShopOffers(1);
     }
     this.shopSlots = [];
+    this.itemSlots = [];
     this.teamSlots = [];
     this.dragState = null;
+
+    this.itemOffers = rollItemOffers();
   }
 
   preload() {
@@ -71,6 +78,7 @@ export class ShopScene extends Phaser.Scene {
     this.createHeader();
     this.createTeamPanel();
     this.createShopPanel();
+    this.createItemShopPanel();
     this.createFooter();
     this.refreshGoldDisplay();
     this.refreshStartBattleButton();
@@ -91,6 +99,24 @@ export class ShopScene extends Phaser.Scene {
 
         this.dragState = {
           type: "shop",
+          slot,
+          pointerId: pointer.id,
+          startX: pointer.worldX,
+          startY: pointer.worldY,
+          offsetX: slot.container.x - pointer.worldX,
+          offsetY: slot.container.y - pointer.worldY,
+          moved: false,
+        };
+        return;
+      }
+
+      const itemIndex = gameObject.getData("itemSlotIndex");
+      if (itemIndex != null) {
+        const slot = this.itemSlots[itemIndex];
+        if (!slot?.item || slot.sold) return;
+
+        this.dragState = {
+          type: "item",
           slot,
           pointerId: pointer.id,
           startX: pointer.worldX,
@@ -146,6 +172,8 @@ export class ShopScene extends Phaser.Scene {
 
       if (this.dragState.type === "shop") {
         this.highlightTeamDropTarget(this.getTeamSlotAtPoint(pointer.worldX, pointer.worldY));
+      } else if (this.dragState.type === "item") {
+        this.highlightItemDropTarget(this.getTeamSlotAtPoint(pointer.worldX, pointer.worldY));
       } else if (this.dragState.type === "team") {
         this.highlightTeamReorderTarget(
           this.getTeamSlotAtPoint(pointer.worldX, pointer.worldY),
@@ -167,6 +195,20 @@ export class ShopScene extends Phaser.Scene {
           const targetTeamSlot = this.getTeamSlotAtPoint(pointer.worldX, pointer.worldY);
           if (targetTeamSlot) {
             this.tryBuyIntoTeamSlot(slot, targetTeamSlot.index);
+          } else {
+            this.snapSlotHome(slot);
+          }
+        } else {
+          this.snapSlotHome(slot);
+        }
+      } else if (type === "item") {
+        slot.container.setDepth(10);
+        this.highlightItemDropTarget(null);
+
+        if (moved) {
+          const targetTeamSlot = this.getTeamSlotAtPoint(pointer.worldX, pointer.worldY);
+          if (targetTeamSlot) {
+            this.tryApplyItemToTeamMember(slot, targetTeamSlot.index);
           } else {
             this.snapSlotHome(slot);
           }
@@ -273,12 +315,12 @@ export class ShopScene extends Phaser.Scene {
     const positions = this.getRowPositions(
       offerCount,
       width * 0.06,
-      width * 0.52,
+      width * 0.46,
       rowY
     );
 
     this.add
-      .text(width * 0.29, splitY + 28, "Battlers For Sale", {
+      .text(width * 0.26, splitY + 28, "Battlers For Sale", {
         fontFamily: "system-ui, sans-serif",
         fontSize: "20px",
         fontStyle: "bold",
@@ -287,7 +329,7 @@ export class ShopScene extends Phaser.Scene {
       .setOrigin(0.5);
 
     this.shopSubtitleText = this.add
-      .text(width * 0.29, splitY + 52, this.getShopSubtitle(), {
+      .text(width * 0.26, splitY + 52, this.getShopSubtitle(), {
         fontFamily: "system-ui, sans-serif",
         fontSize: "13px",
         color: "#b2f2bb",
@@ -305,6 +347,124 @@ export class ShopScene extends Phaser.Scene {
     positions.forEach((pos, index) => {
       this.createShopSlot(index, pos.x, pos.y);
     });
+  }
+
+  createItemShopPanel() {
+    const { width, height } = this.scale;
+    const splitY = this.getPanelSplitY();
+    const itemCenterX = width * 0.72;
+    const itemPositions = [
+      { x: itemCenterX - 52, y: splitY + 118 },
+      { x: itemCenterX + 52, y: splitY + 118 },
+      { x: itemCenterX - 52, y: splitY + 238 },
+      { x: itemCenterX + 52, y: splitY + 238 },
+    ];
+
+    this.add
+      .text(itemCenterX, splitY + 28, "Items", {
+        fontFamily: "system-ui, sans-serif",
+        fontSize: "20px",
+        fontStyle: "bold",
+        color: "#ffffff",
+      })
+      .setOrigin(0.5);
+
+    this.itemSubtitleText = this.add
+      .text(itemCenterX, splitY + 52, this.getItemShopSubtitle(), {
+        fontFamily: "system-ui, sans-serif",
+        fontSize: "13px",
+        color: "#ffe066",
+      })
+      .setOrigin(0.5);
+
+    itemPositions.forEach((pos, index) => {
+      this.createItemSlot(index, pos.x, pos.y);
+    });
+  }
+
+  createItemSlot(index, x, y) {
+    const slot = {
+      index,
+      x,
+      y,
+      item: this.itemOffers[index] ?? null,
+      container: this.add.container(x, y),
+      sold: false,
+    };
+
+    slot.container.setDepth(10);
+    this.renderItemSlot(slot);
+    this.itemSlots.push(slot);
+  }
+
+  renderItemSlot(slot) {
+    slot.container.x = slot.x;
+    slot.container.y = slot.y;
+    slot.container.setDepth(10);
+    slot.container.removeAll(true);
+    slot.container.removeAllListeners();
+    slot.container.disableInteractive();
+
+    if (!slot.item || slot.sold) {
+      return;
+    }
+
+    this.buildItemDisplay(slot.container, slot.item);
+
+    slot.container.setInteractive(
+      new Phaser.Geom.Rectangle(
+        -ITEM_CARD_WIDTH / 2,
+        -ITEM_CARD_HEIGHT / 2,
+        ITEM_CARD_WIDTH,
+        ITEM_CARD_HEIGHT
+      ),
+      Phaser.Geom.Rectangle.Contains
+    );
+    slot.container.setData("itemSlotIndex", slot.index);
+  }
+
+  buildItemDisplay(container, item) {
+    const canAfford = this.runState.gold >= item.cost;
+    const bg = this.add.rectangle(0, 0, ITEM_CARD_WIDTH, ITEM_CARD_HEIGHT, item.color, 0.22);
+    bg.setStrokeStyle(2, item.color, canAfford ? 0.9 : 0.35);
+
+    const icon = this.add
+      .text(0, -24, item.icon, {
+        fontFamily: "system-ui, sans-serif",
+        fontSize: "28px",
+      })
+      .setOrigin(0.5);
+
+    const nameText = this.add
+      .text(0, 8, item.name, {
+        fontFamily: "system-ui, sans-serif",
+        fontSize: "12px",
+        fontStyle: "bold",
+        color: "#ffffff",
+        stroke: "#1a1a2e",
+        strokeThickness: 3,
+      })
+      .setOrigin(0.5);
+
+    const effectText = this.add
+      .text(0, 24, item.description, {
+        fontFamily: "system-ui, sans-serif",
+        fontSize: "10px",
+        color: "#e9ecef",
+      })
+      .setOrigin(0.5);
+
+    const costText = this.add
+      .text(0, 40, `$${item.cost}`, {
+        fontFamily: "system-ui, sans-serif",
+        fontSize: "13px",
+        fontStyle: "bold",
+        color: canAfford ? "#ffd43b" : "#868e96",
+      })
+      .setOrigin(0.5);
+
+    container.add([bg, icon, nameText, effectText, costText]);
+    container.setAlpha(canAfford ? 1 : 0.7);
   }
 
   createShopSlot(index, x, y) {
@@ -455,7 +615,28 @@ export class ShopScene extends Phaser.Scene {
     const attackGroup = this.createStatGroup(-20, statsY, pet.attack, 0xe03131);
     const hpGroup = this.createStatGroup(20, statsY, pet.hp ?? pet.health, 0x1971c2);
 
-    container.add([nameText, attackGroup, hpGroup]);
+    const displayChildren = [nameText, attackGroup, hpGroup];
+    const itemBadge = this.createItemBadge(pet);
+    if (itemBadge) {
+      displayChildren.push(itemBadge);
+    }
+
+    container.add(displayChildren);
+  }
+
+  createItemBadge(pet) {
+    const itemIcons = (pet.items ?? [])
+      .map((itemId) => getItemDefinition(itemId)?.icon ?? "✦")
+      .join("");
+
+    if (!itemIcons) return null;
+
+    return this.add
+      .text(0, CARD_HEIGHT / 2 - 18, itemIcons, {
+        fontFamily: "system-ui, sans-serif",
+        fontSize: "11px",
+      })
+      .setOrigin(0.5);
   }
 
   createPetPortrait(pet) {
@@ -650,10 +831,10 @@ export class ShopScene extends Phaser.Scene {
 
   getTeamHint() {
     if (this.getFilledTeamCount() >= TEAM_SIZE) {
-      return "Team full — drag a battler to Sell to make space";
+      return "Team full — drag battlers to Sell, or items onto battlers to buff";
     }
 
-    return "Drag shop battlers into a team slot";
+    return "Drag shop battlers into team slots, or items onto battlers";
   }
 
   refreshTeamHint() {
@@ -663,9 +844,24 @@ export class ShopScene extends Phaser.Scene {
   getShopSubtitle() {
     const remaining = this.shopSlots.filter((slot) => slot.pet && !slot.sold).length;
     const offerCount = getShopOfferCountForRound(this.runState.round);
-    const poolSize = getShopPoolForRound(this.runState.round).length;
     const available = remaining || offerCount;
     return `${available} for sale · drag to team · $3 each`;
+  }
+
+  getItemShopSubtitle() {
+    const remaining = this.itemSlots.filter((slot) => slot.item && !slot.sold).length;
+    return `${remaining} available · drag onto a battler`;
+  }
+
+  refreshItemShopSubtitle() {
+    this.itemSubtitleText?.setText(this.getItemShopSubtitle());
+  }
+
+  refreshItemShop() {
+    this.itemSlots.forEach((slot) => {
+      this.renderItemSlot(slot);
+    });
+    this.refreshItemShopSubtitle();
   }
 
   getFilledTeamCount() {
@@ -775,6 +971,69 @@ export class ShopScene extends Phaser.Scene {
         );
       }
     });
+  }
+
+  highlightItemDropTarget(teamSlot) {
+    this.teamSlots.forEach((slot) => {
+      if (!slot.selectionRing) return;
+
+      const hasPet = Boolean(this.runState.team[slot.index]);
+      const isTarget = teamSlot === slot && hasPet;
+
+      slot.selectionRing.clear();
+      slot.selectionRing.lineStyle(3, 0xffd43b, isTarget ? 1 : 0);
+      slot.selectionRing.strokeRoundedRect(
+        -CARD_WIDTH / 2 + 4,
+        -CARD_HEIGHT / 2 + 4,
+        CARD_WIDTH - 8,
+        CARD_HEIGHT - 8,
+        10
+      );
+    });
+  }
+
+  tryApplyItemToTeamMember(itemSlot, teamSlotIndex) {
+    if (!itemSlot.item || itemSlot.sold) {
+      this.snapSlotHome(itemSlot);
+      return;
+    }
+
+    const targetPet = this.runState.team[teamSlotIndex];
+    if (!targetPet) {
+      this.snapSlotHome(itemSlot);
+      return;
+    }
+
+    const cost = itemSlot.item.cost;
+    if (this.runState.gold < cost) {
+      this.flashGoldText();
+      this.snapSlotHome(itemSlot);
+      return;
+    }
+
+    this.runState.gold -= cost;
+    this.runState.team[teamSlotIndex] = applyItemToPet(targetPet, itemSlot.item);
+    itemSlot.sold = true;
+    itemSlot.container.disableInteractive();
+    itemSlot.container.setData("itemSlotIndex", null);
+    this.renderItemSlot(itemSlot);
+    this.syncTeamSlots();
+    this.refreshGoldDisplay();
+    this.refreshItemShopSubtitle();
+    this.refreshRerollButton();
+    this.snapSlotHome(itemSlot);
+
+    const slot = this.teamSlots[teamSlotIndex];
+    if (slot) {
+      this.tweens.add({
+        targets: slot.container,
+        scaleX: 1.08,
+        scaleY: 1.08,
+        duration: 100,
+        yoyo: true,
+        ease: "Quad.easeOut",
+      });
+    }
   }
 
   moveTeamMember(fromIndex, toIndex) {
@@ -951,6 +1210,7 @@ export class ShopScene extends Phaser.Scene {
 
     this.runState.gold -= cost;
     this.shopOffers = rollShopOffers(this.runState.round, offerCount);
+    this.itemOffers = rollItemOffers();
 
     this.shopSlots.forEach((slot, index) => {
       slot.pet = this.shopOffers[index] ?? null;
@@ -958,8 +1218,15 @@ export class ShopScene extends Phaser.Scene {
       this.renderShopSlot(slot);
     });
 
+    this.itemSlots.forEach((slot, index) => {
+      slot.item = this.itemOffers[index] ?? null;
+      slot.sold = false;
+      this.renderItemSlot(slot);
+    });
+
     this.refreshGoldDisplay();
     this.refreshShopSubtitle();
+    this.refreshItemShopSubtitle();
     this.refreshRerollButton();
   }
 
@@ -1005,6 +1272,7 @@ export class ShopScene extends Phaser.Scene {
   refreshGoldDisplay() {
     this.goldText.setText(`$${this.runState.gold}`);
     this.refreshRerollButton();
+    this.refreshItemShop();
   }
 
   refreshStartBattleButton() {

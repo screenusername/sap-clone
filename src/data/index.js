@@ -13,6 +13,14 @@ export {
   rollShopOffers,
   getSellValue,
 } from "./shop.js";
+export { rollItemOffers, getItemShopPool } from "./itemShop.js";
+export {
+  ITEM_DEFINITIONS,
+  getItemDefinition,
+  getAllItemDefinitions,
+  createItemOffer,
+  applyItemToPet,
+} from "./items.js";
 export {
   PET_DEFINITIONS,
   SAMPLE_TEAMS,
