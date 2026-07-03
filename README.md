@@ -8,7 +8,7 @@ Static battle view with 3 pet slots per side, placeholder pets (Ant, Baboon, Cat
 
 ## Battler sprites
 
-Add transparent PNGs to `public/assets/battlers/` — see that folder's README for naming and sizing.
+Add transparent PNGs to `assets/battlers/` — see `public/assets/battlers/README.md` for naming and sizing. Vite syncs them into the build automatically.
 
 ## Run locally
 

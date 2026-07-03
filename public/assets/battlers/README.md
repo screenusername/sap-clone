@@ -1,6 +1,6 @@
 # Battler sprites
 
-Drop **transparent PNG** files here for each pet. Sprites are shown at full size (no card background), scaled to a **5:7.6** portrait frame (about **140×213 px** on screen).
+Drop **transparent PNG** files in the project `assets/battlers/` folder (at the repo root). Vite copies them into the build automatically.
 
 ## File naming
 

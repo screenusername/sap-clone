@@ -10,7 +10,7 @@ import { getShopCostForTier } from "./tiers.js";
  * - tier: shop tier (1–6)
  * - attack / health: base stats at level 1
  * - ability: trigger + description for UI; battle logic comes later
- * - hasBattlerArt: whether a PNG exists in public/assets/battlers/
+ * - hasBattlerArt: whether a PNG exists in assets/battlers/
  * - color: optional UI tint for placeholders and effects
  */
 export const PET_DEFINITIONS = [
